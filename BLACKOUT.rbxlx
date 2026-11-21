@@ -1,0 +1,1649 @@
+<?xml version="1.0" encoding="utf-8"?>
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
+  <External>null</External>
+  <External>nil</External>
+  <Item class="Workspace" referent="RBX00000000000000000000000000000001">
+    <Properties>
+      <string name="Name">Workspace</string>
+      <bool name="StreamingEnabled">false</bool>
+      <Ref name="CurrentCamera">RBX00000000000000000000000000000002</Ref>
+    </Properties>
+    <Item class="Camera" referent="RBX00000000000000000000000000000002">
+      <Properties>
+        <string name="Name">Camera</string>
+        <CoordinateFrame name="CFrame">
+          <X>199</X><Y>117</Y><Z>139</Z>
+          <R00>0.576</R00><R01>-0.356</R01><R02>0.736</R02>
+          <R10>0</R10><R11>0.900</R11><R12>0.435</R12>
+          <R20>-0.818</R20><R21>-0.251</R21><R22>0.518</R22>
+        </CoordinateFrame>
+      </Properties>
+    </Item>
+    <Item class="Part" referent="RBX00000000000000000000000000000003">
+      <Properties>
+        <string name="Name">SiteGround</string>
+        <bool name="Anchored">true</bool>
+        <Vector3 name="size"><X>262</X><Y>3</Y><Z>248</Z></Vector3>
+        <CoordinateFrame name="CFrame">
+          <X>0</X><Y>-1.5</Y><Z>0</Z>
+          <R00>1</R00><R01>0</R01><R02>0</R02>
+          <R10>0</R10><R11>1</R11><R12>0</R12>
+          <R20>0</R20><R21>0</R21><R22>1</R22>
+        </CoordinateFrame>
+      </Properties>
+    </Item>
+  </Item>
+  <Item class="Lighting" referent="RBX00000000000000000000000000000004">
+    <Properties><string name="Name">Lighting</string></Properties>
+  </Item>
+  <Item class="ReplicatedStorage" referent="RBX00000000000000000000000000000005">
+    <Properties><string name="Name">ReplicatedStorage</string></Properties>
+  </Item>
+  <Item class="ServerScriptService" referent="RBX00000000000000000000000000000006">
+    <Properties><string name="Name">ServerScriptService</string></Properties>
+    <Item class="Script" referent="RBX00000000000000000000000000000007">
+      <Properties>
+        <string name="Name">BlackoutServer</string>
+        <bool name="Disabled">false</bool>
+        <ProtectedString name="Source"><![CDATA[
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+local PathfindingService = game:GetService("PathfindingService")
+local ProximityPromptService = game:GetService("ProximityPromptService")
+local Debris = game:GetService("Debris")
+
+local vec, rgb = Vector3.new, Color3.fromRGB
+local palette = {
+    wall = rgb(42, 47, 53), metal = rgb(27, 31, 37), concrete = rgb(63, 65, 67),
+    asphalt = rgb(33, 36, 41), soil = rgb(44, 48, 48), wood = rgb(68, 56, 48),
+    rust = rgb(96, 65, 55), red = rgb(253, 62, 73), darkRed = rgb(112, 34, 42),
+    amber = rgb(255, 172, 70), off = rgb(65, 48, 41), green = rgb(117, 229, 177),
+    ice = rgb(174, 206, 224), text = rgb(237, 235, 223), black = rgb(18, 20, 25),
+}
+local METAL, CONCRETE, NEON = Enum.Material.Metal, Enum.Material.Concrete, Enum.Material.Neon
+local MAX_PLAYERS, MATCH_TIME, PRACTICE_TIME = 5, 330, 300
+local BLOCK_TIME, RESULT_TIME = 9, 8
+local ATTACK_COOLDOWN, ATTACK_RANGE = 1.7, 8.5
+local random = Random.new(701)
+
+local function container(class, name, parent)
+    local object = Instance.new(class)
+    object.Name = name
+    object.Parent = parent
+    return object
+end
+
+local function block(parent, name, size, position, color, material, solid)
+    local p = Instance.new("Part")
+    p.Name = name
+    p.Size = size
+    p.CFrame = typeof(position) == "Vector3" and CFrame.new(position) or position
+    p.Anchored = true
+    p.Color = color or palette.metal
+    p.Material = material or METAL
+    p.CanCollide = solid ~= false
+    p.CanQuery = solid ~= false
+    p.CanTouch = false
+    p.Parent = parent
+    return p
+end
+
+local function strut(parent, name, a, b, thickness, color, material, solid)
+    return block(parent, name, vec(thickness, thickness, (b - a).Magnitude),
+        CFrame.lookAt((a + b) / 2, b), color, material, solid)
+end
+
+local function marker(parent, name, position)
+    local p = block(parent, name, vec(0.3, 0.3, 0.3), position, palette.black, METAL, false)
+    p.Transparency = 1
+    p.CastShadow = false
+    return p
+end
+
+local function light(host, color, brightness, range)
+    local bulb = container("PointLight", "Glow", host)
+    bulb.Color = color
+    bulb.Brightness = brightness
+    bulb.Range = range
+    return bulb
+end
+
+local function sign(host, text, color, width, height, distance, offset)
+    local gui = container("BillboardGui", "Sign", host)
+    gui.Size = UDim2.fromScale(width, height)
+    gui.StudsOffsetWorldSpace = offset or Vector3.zero
+    gui.MaxDistance = distance
+    gui.LightInfluence = 0
+    local label = container("TextLabel", "Text", gui)
+    label.Size = UDim2.fromScale(1, 1)
+    label.BackgroundColor3 = palette.black
+    label.BackgroundTransparency = 0.18
+    label.TextColor3 = color
+    label.Font = Enum.Font.GothamBold
+    label.TextScaled = true
+    label.Text = text
+    local pad = container("UIPadding", "Inset", label)
+    pad.PaddingLeft = UDim.new(0.055, 0)
+    pad.PaddingRight = UDim.new(0.055, 0)
+    return label
+end
+
+Lighting.ClockTime = 1.7
+Lighting.Brightness = 1.55
+Lighting.Ambient = rgb(67, 72, 83)
+Lighting.OutdoorAmbient = rgb(83, 91, 103)
+Lighting.EnvironmentDiffuseScale = 0.32
+Lighting.EnvironmentSpecularScale = 0.45
+Lighting.GlobalShadows = true
+Lighting.FogColor = rgb(44, 49, 59)
+Lighting.FogStart = 42
+Lighting.FogEnd = 188
+local grade = container("ColorCorrectionEffect", "Blackout Grade", Lighting)
+grade.Contrast = 0.11
+grade.Saturation = -0.22
+grade.TintColor = rgb(237, 240, 255)
+local bloom = container("BloomEffect", "Signal Glow", Lighting)
+bloom.Intensity = 0.24
+bloom.Size = 25
+bloom.Threshold = 1.08
+
+local arena = container("Model", "Site 07 - Runtime Map", workspace)
+local lobby = container("Model", "Control Room - Lobby", workspace)
+local effects = container("Folder", "Blackout Effects", workspace)
+local ground = workspace:FindFirstChild("SiteGround")
+if not ground then
+    ground = block(workspace, "SiteGround", vec(262, 3, 248), vec(0, -1.5, 0), palette.soil)
+end
+ground.Material = Enum.Material.Slate
+ground.Color = palette.soil
+ground.TopSurface = Enum.SurfaceType.Smooth
+ground.BottomSurface = Enum.SurfaceType.Smooth
+
+local generators, gates, cells = {}, {}, {}
+
+local function fence(ax, az, bx, bz)
+    local a, b = vec(ax, 0, az), vec(bx, 0, bz)
+    local length = (b - a).Magnitude
+    local face = CFrame.lookAt((a + b) / 2, b)
+    local invisible = block(arena, "Fence Collision", vec(0.8, 10, length), face + vec(0, 5, 0))
+    invisible.Transparency = 1
+    invisible.CastShadow = false
+    block(arena, "Fence Base", vec(2.2, 1.6, length), face + vec(0, 0.8, 0), palette.concrete, CONCRETE, false)
+    for _, y in ipairs({2.6, 6.4, 9.1}) do
+        block(arena, "Fence Rail", vec(0.4, 0.36, length), face + vec(0, y, 0), palette.wall, METAL, false)
+    end
+    local count = math.floor(length / 3.8)
+    for i = 0, count do
+        local pos = a:Lerp(b, i / count)
+        block(arena, "Fence Picket", vec(0.31, 8.5, 0.31), pos + vec(0, 5.3, 0), palette.metal, METAL, false)
+    end
+end
+
+local function shed(name, x, z, w, d, number)
+    local model = container("Model", name, arena)
+    local height = 12
+    local opening = 12
+    block(model, "Foundation", vec(w, 0.2, d), vec(x, 0.05, z), palette.concrete, CONCRETE, false)
+    for _, sx in ipairs({-1, 1}) do
+        block(model, "Side Wall", vec(1, height, d), vec(x + sx * w / 2, height / 2, z), palette.wall, Enum.Material.CorrodedMetal)
+        for _, sz in ipairs({-1, 1}) do
+            block(model, "End Wall", vec((w - opening) / 2, height, 1),
+                vec(x + sx * (w + opening) / 4, height / 2, z + sz * d / 2), palette.wall, Enum.Material.CorrodedMetal)
+        end
+        local beam = block(model, "Roof Panel", vec(w / 2 + 1.2, 0.75, d + 3),
+            CFrame.new(x + sx * w / 4, 13, z) * CFrame.Angles(0, 0, math.rad(-6 * sx)), palette.metal, METAL)
+        beam.CastShadow = true
+        for _, sz in ipairs({-1, 1}) do
+            local column = vec(x + sx * (opening / 2 + 0.35), 5.4, z + sz * (d / 2 + 0.15))
+            block(model, "Door Jamb", vec(0.8, 10.8, 0.9), column, palette.rust, METAL, false)
+            block(model, "Corner Column", vec(1.2, 12, 1.2),
+                vec(x + sx * w / 2, 6, z + sz * d / 2), palette.metal, METAL, false)
+        end
+    end
+    for _, sz in ipairs({-1, 1}) do
+        block(model, "Lintel", vec(opening, 2.5, 0.9), vec(x, 10.75, z + sz * d / 2), palette.metal, METAL)
+        local plate = marker(model, "Door Number", vec(x, 10.6, z + sz * (d / 2 + 1)))
+        sign(plate, number .. " / " .. name, palette.ice, 10, 1.65, 65)
+        local tube = block(model, "Door Light", vec(5.2, 0.18, 0.25),
+            vec(x, 8.9, z + sz * (d / 2 + 0.55)), palette.ice, NEON, false)
+        light(tube, palette.ice, 1.0, 21)
+    end
+    local inside = block(model, "Work Light", vec(5.6, 0.24, 0.34), vec(x, 10.2, z), palette.amber, NEON, false)
+    light(inside, palette.amber, 1.4, 24)
+end
+
+local function crate(x, z, width, height, depth, rotated)
+    local model = container("Model", "Freight", arena)
+    local pose = CFrame.new(x, height / 2, z) * CFrame.Angles(0, math.rad(rotated or 0), 0)
+    block(model, "Cargo", vec(width, height, depth), pose, palette.wood, Enum.Material.WoodPlanks)
+    for _, sx in ipairs({-1, 1}) do
+        block(model, "Strap", vec(0.35, height + 0.15, depth + 0.15),
+            pose * CFrame.new(sx * width / 3, 0, 0), palette.metal, METAL, false)
+    end
+    block(model, "Marking", vec(width * 0.62, 0.35, 0.06), pose * CFrame.new(0, height / 4, -depth / 2 - 0.04), palette.rust, METAL, false)
+end
+
+local function tower(x, z, color)
+    local model = container("Model", "Signal Post", arena)
+    block(model, "Footing", vec(3, 1.1, 3), vec(x, 0.55, z), palette.concrete, CONCRETE)
+    block(model, "Mast", vec(0.65, 13, 0.65), vec(x, 6.5, z), palette.metal)
+    block(model, "Beam", vec(4.3, 0.5, 0.55), vec(x + 1.7, 12.1, z), palette.metal, METAL, false)
+    local emitter = block(model, "Lamp", vec(2.4, 0.38, 1), vec(x + 2.55, 11.68, z), color, NEON, false)
+    light(emitter, color, 1.8, 29)
+end
+
+local function tree(x, z, solid)
+    local model = container("Model", "Pine", arena)
+    local height = random:NextNumber(16, 27)
+    local trunk = vec(x, height * 0.45, z)
+    block(model, "Trunk", vec(1.35, height * 0.9, 1.35), trunk, rgb(45, 43, 44), Enum.Material.Wood, solid)
+    for i = 0, 3 do
+        local w = height * (0.39 - i * 0.064)
+        local leaf = 35 + 3 * i + random:NextInteger(-6, 5)
+        block(model, "Canopy", vec(w, height * 0.19, w),
+            CFrame.new(x, height * (0.51 + i * 0.153), z) * CFrame.Angles(0, math.rad(45 + i * 20), 0),
+            rgb(leaf - 9, leaf + 3, leaf), Enum.Material.Grass, false)
+    end
+end
+
+local function generator(x, z, number)
+    local model = container("Model", "Generator " .. number, arena)
+    block(model, "Skid", vec(6.6, 0.44, 4.2), vec(x, 0.22, z), palette.metal, Enum.Material.DiamondPlate)
+    block(model, "Housing", vec(5.55, 3.1, 3.15), vec(x, 1.88, z), palette.rust, Enum.Material.CorrodedMetal)
+    block(model, "Service Panel", vec(4, 2.1, 0.18), vec(x, 1.85, z + 1.66), palette.black, METAL, false)
+    for index = -3, 3 do
+        block(model, "Vent", vec(0.31, 0.78, 0.11), vec(x + index * 0.44, 1.52, z + 1.79), palette.wall, METAL, false)
+    end
+    local lamps = {}
+    for i = 1, 3 do
+        lamps[i] = block(model, "Circuit " .. i, vec(0.68, 0.23, 0.12),
+            vec(x + (i - 2) * 0.92, 2.57, z + 1.82), palette.off, METAL, false)
+    end
+    local hazard = block(model, "Beacon", vec(0.62, 0.45, 0.62), vec(x + 2.2, 3.62, z), palette.amber, NEON, false)
+    local spot = light(hazard, palette.amber, 0.8, 12)
+    local anchor = marker(model, "Service Point", vec(x, 3.75, z))
+    local label = sign(anchor, "ГЕНЕРАТОР " .. number, palette.amber, 6.9, 1.15, 45, vec(0, 2, 0))
+    table.insert(generators, {anchor = anchor, lamps = lamps, bulb = hazard, light = spot, label = label, number = number, steps = 0})
+end
+
+local function makeGate(x, z, code, direction, terminalSide)
+    local model = container("Model", "Exit " .. code, arena)
+    for _, side in ipairs({-1, 1}) do
+        block(model, "Gate Frame", vec(1.8, 14, 2.4), vec(x + side * 7.5, 7, z), palette.concrete, CONCRETE)
+        block(model, "Exit Channel", vec(0.8, 8, 22), vec(x + side * 7.7, 4, z + direction * 11), palette.wall)
+    end
+    block(model, "Header", vec(17, 2.2, 2.1), vec(x, 13.1, z), palette.metal)
+    block(model, "End Stop", vec(16, 6, 1.2), vec(x, 3, z + direction * 21), palette.wall)
+    local door = block(model, "Roller Shutter", vec(13.4, 10.7, 1.3), vec(x, 5.35, z), palette.wall, Enum.Material.DiamondPlate)
+    local lamp = block(model, "Gate Signal", vec(9, 0.32, 0.58), vec(x, 11.6, z - direction * 1.12), palette.red, NEON, false)
+    local glow = light(lamp, palette.red, 1.8, 26)
+    local label = sign(lamp, "ВЫХОД " .. code .. " / НЕТ ПИТАНИЯ", palette.red, 13, 1.6, 82, vec(0, 3.4, 0))
+    local tx, tz = x + terminalSide * 10.6, z - direction * 6.5
+    block(model, "Terminal", vec(2.05, 3.35, 1.65), vec(tx, 1.67, tz), palette.metal, Enum.Material.DiamondPlate)
+    local panel = block(model, "Terminal Signal", vec(1.1, 0.4, 0.51), vec(tx, 3.45, tz), palette.red, NEON, false)
+    local anchor = marker(model, "Gate Control", vec(tx, 3.8, tz))
+    table.insert(gates, {
+        code = code, x = x, z = z, dir = direction, door = door, closed = door.CFrame, lamp = lamp,
+        panel = panel, light = glow, label = label, anchor = anchor, open = false,
+    })
+end
+
+local function makeCell(x, z, number)
+    local model = container("Model", "Containment " .. number, arena)
+    block(model, "Cell Floor", vec(9, 0.42, 8.8), vec(x, 0.15, z), palette.concrete, CONCRETE, false)
+    for _, side in ipairs({-1, 1}) do
+        for i = -2, 2 do
+            block(model, "Cage Bar", vec(0.28, 8.1, 0.28), vec(x + side * 4.2, 4.1, z + i * 1.95), palette.wall, METAL, false)
+        end
+        block(model, "Cell Post", vec(0.85, 8.3, 0.85), vec(x + side * 4.2, 4.15, z + 4.2), palette.metal)
+    end
+    for i = -2, 2 do
+        block(model, "Cage Back", vec(0.28, 8.1, 0.28), vec(x + i * 1.8, 4.1, z + 4.2), palette.wall, METAL, false)
+    end
+    block(model, "Cell Canopy", vec(9, 0.5, 9.05), vec(x, 8.12, z), palette.metal)
+    local lamp = block(model, "Cell Signal", vec(4.2, 0.24, 0.4), vec(x, 7.9, z - 4.55), palette.darkRed, NEON, false)
+    local glow = light(lamp, palette.red, 0.45, 16)
+    sign(lamp, "ИЗОЛЯТОР " .. number, palette.red, 7.1, 1.18, 49, vec(0, 1.3, 0))
+    table.insert(cells, {x = x, z = z, lamp = lamp, light = glow})
+end
+
+do
+    fence(-109, -94, -109, 94)
+    fence(109, -94, 109, 94)
+    fence(-109, -94, -63.5, -94)
+    fence(-48.5, -94, 109, -94)
+    fence(-109, 94, 49.5, 94)
+    fence(64.5, 94, 109, 94)
+    makeGate(-56, -94, "A", -1, 1)
+    makeGate(57, 94, "B", 1, -1)
+
+    for _, z in ipairs({-27, 14, 61}) do
+        block(arena, "Service Lane", vec(209, 0.05, 10), vec(0, 0.033, z), palette.asphalt, Enum.Material.Asphalt, false)
+        for x = -94, 94, 12 do
+            block(arena, "Lane Marking", vec(4.7, 0.03, 0.15), vec(x, 0.069, z), palette.concrete, CONCRETE, false)
+        end
+    end
+    shed("МАШЗАЛ", 0, -12, 44, 32, "02")
+    shed("ЦЕХ", -56, 32, 35, 30, "01")
+    shed("ПОДСТАНЦИЯ", 56, -48, 32, 24, "03")
+    crate(-18, -12, 4, 6, 6, 4)
+    crate(17, -18, 5, 5.7, 5.8, -8)
+    crate(-44, 34, 5, 5, 5.5, 0)
+    crate(65, -40, 4.5, 6, 5.4, 0)
+    crate(53, 42, 15, 7.3, 4.4, 0)
+    crate(65, 54, 5, 5.2, 12.5, -4)
+    crate(48, 54, 5, 4.1, 6.5, 9)
+    crate(-72, -59, 12, 5.5, 4.5, -9)
+    crate(-81, -42, 4.4, 5.1, 7.3, 6)
+    crate(-11, 36, 7, 5.2, 6.2, 15)
+    crate(29, -65, 6.1, 5.7, 8.2, 7)
+    crate(87, -9, 9.4, 6.4, 7, -9)
+    crate(5, 71, 13, 5.8, 4, 7)
+    crate(-49, 67, 8.2, 7.6, 5.8, 0)
+
+    generator(-66, 32, "01")
+    generator(8, -12, "02")
+    generator(55, -49, "03")
+    generator(56, 49, "04")
+    generator(-68, -50, "05")
+
+    makeCell(-28, -45, "01")
+    makeCell(27, 30, "02")
+    makeCell(-83, 67, "03")
+    tower(-61, -47, palette.amber)
+    tower(-25, 19, palette.ice)
+    tower(40, 53, palette.amber)
+    tower(30, -76, palette.ice)
+    tower(89, 28, palette.red)
+    tower(-86, 40, palette.ice)
+    tower(3, 82, palette.ice)
+
+    for z = -94, 94, 15 do
+        tree(-120 + random:NextNumber(-3, 2), z + random:NextNumber(-3, 2), false)
+        tree(120 + random:NextNumber(-3, 2), z + random:NextNumber(-3, 2), false)
+    end
+    for x = -99, 100, 17 do
+        if math.abs(x + 56) > 12 then tree(x, -112, false) end
+        if math.abs(x - 57) > 12 then tree(x + 2, 114, false) end
+    end
+    for _, p in ipairs({{-97, -71}, {-91, -60}, {-92, -5}, {-88, 0}, {-99, 57}, {-97, 71},
+        {91, -58}, {95, -62}, {99, 56}, {90, 60}, {77, 75}, {8, -66}, {-14, -78}, {-62, 79}}) do
+        tree(p[1], p[2], true)
+    end
+end
+
+local lobbyPosition = vec(0, 3.25, 298)
+local lobbyFacing = vec(0, 3.25, 281)
+local spawn = Instance.new("SpawnLocation")
+spawn.Name = "ControlRoomSpawn"
+spawn.Size = vec(8, 0.28, 7)
+spawn.CFrame = CFrame.new(0, 0.1, 298)
+spawn.Neutral = true
+spawn.Enabled = true
+spawn.Duration = 0
+spawn.Anchored = true
+spawn.CanCollide = false
+spawn.CanQuery = false
+spawn.CanTouch = false
+spawn.Transparency = 1
+spawn.Parent = lobby
+
+do
+    block(lobby, "Deck", vec(56, 2, 42), vec(0, -1, 290), palette.wall, Enum.Material.DiamondPlate)
+    block(lobby, "Ceiling", vec(56, 1.2, 42), vec(0, 13.1, 290), palette.black)
+    for _, side in ipairs({-1, 1}) do
+        block(lobby, "Long Wall", vec(1.4, 13, 42), vec(side * 27.7, 6.5, 290), palette.wall, CONCRETE)
+        block(lobby, "End Wall", vec(56, 13, 1.4), vec(0, 6.5, 290 + side * 20.4), palette.metal, CONCRETE)
+        local lamp = block(lobby, "Ceiling Strip", vec(16, 0.3, 0.5), vec(side * 13, 12.35, 291), palette.ice, NEON, false)
+        light(lamp, palette.ice, 1.8, 48)
+        block(lobby, "Guide Stripe", vec(0.32, 0.04, 38), vec(side * 8.5, 0.03, 290), palette.rust, METAL, false)
+    end
+    block(lobby, "Console", vec(15, 2.8, 3.3), vec(0, 1.4, 277), palette.black, Enum.Material.DiamondPlate)
+    local console = block(lobby, "Console Status", vec(10, 0.21, 0.33), vec(0, 2.85, 278.1), palette.red, NEON, false)
+    light(console, palette.red, 2.4, 27)
+    local marquee = marker(lobby, "Main Sign", vec(0, 8.8, 271.3))
+    sign(marquee, "B L A C K O U T", palette.text, 23, 3, 70)
+    local subtitle = marker(lobby, "Site Sign", vec(0, 5.7, 271.4))
+    sign(subtitle, "ОБЪЕКТ 07 / ПУЛЬТ УПРАВЛЕНИЯ", palette.red, 21, 1.45, 65)
+end
+
+local state = container("Folder", "Blackout", ReplicatedStorage)
+local actionEvent = container("RemoteEvent", "Action", state)
+local signalEvent = container("RemoteEvent", "Signal", state)
+local function setState(key, value)
+    if state:GetAttribute(key) ~= value then state:SetAttribute(key, value) end
+end
+
+setState("Phase", "Lobby")
+setState("ReadyPlayers", 0)
+setState("Seconds", 0)
+setState("Power", "Off")
+setState("Repaired", 0)
+setState("Required", 2)
+setState("GeneratorCount", #generators)
+setState("Solo", false)
+setState("Result", "")
+setState("ResultDetail", "")
+setState("HuntAt", 0)
+
+local phase, round = "Lobby", nil
+local lobbyUntil, resultsUntil = nil, 0
+local queueOrder, roundsPlayed = 0, 0
+local profiles, prompts, holds = {}, {}, {}
+local finishRound, startRound
+
+local sight = RaycastParams.new()
+sight.FilterType = Enum.RaycastFilterType.Include
+sight.FilterDescendantsInstances = {arena}
+sight.IgnoreWater = true
+
+local function clear(from, to)
+    local delta = to - from
+    return delta.Magnitude < 0.08 or workspace:Raycast(from, delta, sight) == nil
+end
+
+local function avatar(player)
+    local char = player.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if char and char:IsDescendantOf(workspace) and hum and root and hum.Health > 0 then
+        return root, hum, char
+    end
+    return nil, nil, nil
+end
+
+local function placePlayer(player, position, facing)
+    local root, _, char = avatar(player)
+    if not root then return end
+    root.Anchored = false
+    char:PivotTo(CFrame.lookAt(position, facing) * root.CFrame:ToObjectSpace(char:GetPivot()))
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.AssemblyAngularVelocity = Vector3.zero
+end
+
+local function tell(player, message)
+    if player and player.Parent == Players then signalEvent:FireClient(player, "Notice", message) end
+end
+
+local function fit(record)
+    return record and record.role == "Survivor" and (record.life == "Fit" or record.life == "Hurt")
+end
+
+local function gone(record)
+    return record.life == "Escaped" or record.life == "Out"
+end
+
+local function mobility(player, record, now)
+    local _, hum = avatar(player)
+    if not hum then return end
+    local speed, jump = 16, 36
+    if record and not gone(record) then
+        if record.role == "Warden" then
+            speed = now < round.release and 0 or 17
+            jump = speed == 0 and 0 or 30
+        elseif record.life == "Down" then
+            speed, jump = 4, 0
+        elseif record.life == "Held" then
+            speed, jump = 0, 0
+        else
+            speed = record.running and 22 or 15
+            if record.life == "Hurt" and record.immuneUntil > now then speed = math.max(18, speed) end
+            jump = 32
+        end
+    end
+    hum.WalkSpeed = speed
+    hum.UseJumpPower = true
+    hum.JumpPower = jump
+end
+
+local function enabled(info, active)
+    info.enabled = active
+    info.prompt:SetAttribute("BlackoutEnabled", active)
+    info.prompt.Enabled = active
+end
+
+local function makePrompt(anchor, kind, text, object, duration, range, data)
+    local p = Instance.new("ProximityPrompt")
+    p.Name = "BlackoutInteraction"
+    p.ActionText = text
+    p.ObjectText = object
+    p.HoldDuration = duration
+    p.MaxActivationDistance = range
+    p.KeyboardKeyCode = Enum.KeyCode.E
+    p.GamepadKeyCode = Enum.KeyCode.ButtonX
+    p.RequiresLineOfSight = false
+    p:SetAttribute("BlackoutKind", kind)
+    p:SetAttribute("BlackoutEnabled", false)
+    if data.player then p:SetAttribute("BlackoutTarget", data.player.UserId) end
+    p.Enabled = false
+    local info = {prompt = p, anchor = anchor, kind = kind, range = range, duration = duration, data = data, enabled = false}
+    prompts[p] = info
+    p.Parent = anchor
+    return info
+end
+
+local function dropPrompts(record)
+    for _, info in ipairs(record.actions) do
+        prompts[info.prompt] = nil
+        info.prompt:Destroy()
+    end
+    table.clear(record.actions)
+end
+
+local function cellState(cell, player)
+    cell.player = player
+    cell.lamp.Color = player and palette.red or palette.darkRed
+    cell.light.Brightness = player and 1.7 or 0.45
+end
+
+local function freeCell(record)
+    if record.cell then
+        cellState(record.cell, nil)
+        record.cell = nil
+    end
+end
+
+local function setLife(player, record, life, untilTime)
+    record.life = life
+    record.expires = untilTime or 0
+    record.running = false
+    player:SetAttribute("Life", life)
+    player:SetAttribute("Running", false)
+    player:SetAttribute("RecoveryAt", untilTime and workspace:GetServerTimeNow() + math.max(0, untilTime - os.clock()) or 0)
+    dropPrompts(record)
+    local root, _, char = avatar(player)
+    if char and record.mark then record.mark:Destroy(); record.mark = nil end
+    if root and (life == "Hurt" or life == "Down" or life == "Held") then
+        local mark = container("Highlight", "Shift Condition", char)
+        mark.Adornee = char
+        mark.DepthMode = Enum.HighlightDepthMode.Occluded
+        mark.FillColor = life == "Hurt" and palette.amber or palette.red
+        mark.OutlineColor = mark.FillColor
+        mark.FillTransparency = 0.91
+        mark.OutlineTransparency = life == "Hurt" and 0.7 or 0.31
+        record.mark = mark
+        if life == "Hurt" then
+            table.insert(record.actions, makePrompt(root, "Aid", "Перевязать", "Товарищ ранен", 3.1, 7.5, record))
+        elseif life == "Down" then
+            table.insert(record.actions, makePrompt(root, "Lift", "Поднять", "Товарищ сбит", 2.7, 7.5, record))
+            table.insert(record.actions, makePrompt(root, "Catch", "Запереть", "Пойманный беглец", 1.1, 7.5, record))
+        else
+            table.insert(record.actions, makePrompt(root, "Release", "Освободить", "Изолятор", 2.6, 9, record))
+        end
+        for _, info in ipairs(record.actions) do enabled(info, true) end
+    end
+    mobility(player, record, os.clock())
+end
+
+local function returnToLobby(player, record)
+    if record then
+        dropPrompts(record)
+        freeCell(record)
+        if record.mark then record.mark:Destroy(); record.mark = nil end
+        record.running = false
+    end
+    local _, hum, char = avatar(player)
+    if char then
+        local lens = char:FindFirstChild("Warden Visor")
+        if lens then lens:Destroy() end
+        local outline = char:FindFirstChild("Warden Outline")
+        if outline then outline:Destroy() end
+        hum.Health = hum.MaxHealth
+        local dx = (profiles[player] and profiles[player].order or 0) % 7 - 3
+        placePlayer(player, lobbyPosition + vec(dx, 0, 0), lobbyFacing)
+    end
+    holds[player] = nil
+    player:SetAttribute("Running", false)
+    player:SetAttribute("Threat", 0)
+    player:SetAttribute("RecoveryAt", 0)
+    player:SetAttribute("Energy", 100)
+    mobility(player, nil, os.clock())
+end
+
+local function out(player, record, message)
+    if gone(record) then return end
+    setLife(player, record, "Out")
+    returnToLobby(player, record)
+    tell(player, message or "Смена для тебя закончилась.")
+end
+
+for _, unit in ipairs(generators) do
+    unit.interact = makePrompt(unit.anchor, "Repair", "Ремонт 1/3", "Генератор " .. unit.number, 3.35, 9.5, unit)
+end
+for _, gate in ipairs(gates) do
+    gate.interact = makePrompt(gate.anchor, "Gate", "Открыть ворота", "Выход " .. gate.code, 4.0, 9.5, gate)
+end
+
+local function genState(unit, active)
+    local full = unit.steps == 3
+    for i, lamp in ipairs(unit.lamps) do
+        lamp.Color = unit.steps >= i and palette.green or palette.off
+        lamp.Material = unit.steps >= i and NEON or METAL
+    end
+    unit.label.TextColor3 = full and palette.green or palette.amber
+    unit.label.Text = "ГЕНЕРАТОР " .. unit.number .. (full and " / В СЕТИ" or "")
+    unit.bulb.Color = full and palette.green or palette.amber
+    unit.light.Color = unit.bulb.Color
+    unit.interact.prompt.ActionText = "Ремонт " .. math.min(3, unit.steps + 1) .. "/3"
+    enabled(unit.interact, active and not full)
+end
+
+local function gateState(gate, powered)
+    local status = gate.open and "ОТКРЫТ" or (powered and "ЕСТЬ ПИТАНИЕ" or "НЕТ ПИТАНИЯ")
+    local color = gate.open and palette.green or (powered and palette.amber or palette.red)
+    gate.lamp.Color = color
+    gate.panel.Color = color
+    gate.light.Color = color
+    gate.label.TextColor3 = color
+    gate.label.Text = "ВЫХОД " .. gate.code .. " / " .. status
+    enabled(gate.interact, powered and not gate.open)
+end
+
+local function resetObjectives()
+    for _, unit in ipairs(generators) do
+        unit.steps = 0
+        genState(unit, false)
+    end
+    for _, gate in ipairs(gates) do
+        gate.open = false
+        if gate.tween then gate.tween:Cancel(); gate.tween = nil end
+        gate.door.CFrame = gate.closed
+        gate.door.CanCollide = true
+        gateState(gate, false)
+    end
+    for _, cell in ipairs(cells) do cellState(cell, nil) end
+end
+
+local function raiseGate(gate)
+    gate.open = true
+    gateState(gate, true)
+    setState("Power", "Open")
+    local tween = TweenService:Create(gate.door, TweenInfo.new(1.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+        CFrame = gate.closed + vec(0, 12.7, 0),
+    })
+    gate.tween = tween
+    tween:Play()
+    signalEvent:FireAllClients("Notice", "Выход " .. gate.code .. " открыт. Беги за ворота!")
+end
+
+local function validPrompt(player, info)
+    if phase ~= "Round" or not round or not info or not info.enabled or not info.anchor:IsDescendantOf(workspace) then return false end
+    local record = round.records[player]
+    if not record or gone(record) then return false end
+    local kind, data = info.kind, info.data
+    if kind == "Catch" then
+        if record.role ~= "Warden" or os.clock() < round.release or data.life ~= "Down" then return false end
+    else
+        if not fit(record) then return false end
+        if kind == "Repair" and (data.steps >= 3 or round.repaired >= round.required) then return false end
+        if kind == "Gate" and (data.open or round.repaired < round.required) then return false end
+        if kind == "Aid" or kind == "Lift" or kind == "Release" then
+            if player == data.player or not avatar(data.player) then return false end
+            if (kind == "Aid" and data.life ~= "Hurt") or (kind == "Lift" and data.life ~= "Down")
+                or (kind == "Release" and data.life ~= "Held") then return false end
+        end
+    end
+    local root = avatar(player)
+    return root ~= nil and (root.Position - info.anchor.Position).Magnitude <= info.range + 1
+        and clear(root.Position + vec(0, 0.9, 0), info.anchor.Position + vec(0, 0.55, 0))
+end
+
+local function capture(target, record)
+    local root = avatar(target)
+    if not root then return end
+    local best, bestDistance = nil, math.huge
+    for _, cell in ipairs(cells) do
+        local dist = (root.Position - vec(cell.x, 3, cell.z)).Magnitude
+        if not cell.player and dist < bestDistance then best, bestDistance = cell, dist end
+    end
+    if not best then return end
+    record.captures += 1
+    if record.captures >= 2 then
+        out(target, record, "Второй захват. Ты выбыл из смены.")
+        return
+    end
+    record.cell = best
+    cellState(best, target)
+    placePlayer(target, vec(best.x, 3.25, best.z), vec(best.x, 3.25, best.z - 6))
+    root.Anchored = true
+    setLife(target, record, "Held", os.clock() + 42)
+    tell(target, "Ты в изоляторе. Напарник может открыть его.")
+end
+
+local function completePrompt(player, info)
+    local kind, data = info.kind, info.data
+    if kind == "Repair" then
+        data.steps += 1
+        genState(data, true)
+        round.noise = {position = data.anchor.Position, expires = os.clock() + 9}
+        if round.warden and round.warden.Parent == Players then
+            signalEvent:FireClient(round.warden, "Noise", data.anchor.Position)
+        end
+        if data.steps == 3 then
+            round.repaired += 1
+            setState("Repaired", round.repaired)
+            if round.repaired >= round.required then
+                for _, unit in ipairs(generators) do enabled(unit.interact, false) end
+                for _, gate in ipairs(gates) do gateState(gate, true) end
+                setState("Power", "Ready")
+                signalEvent:FireAllClients("Notice", "Питание восстановлено. Ворота A и B доступны.")
+            else
+                tell(player, "Генератор " .. data.number .. " подключён к сети.")
+            end
+        else
+            tell(player, "Контур " .. data.steps .. "/3 закреплён. Продолжай ремонт.")
+        end
+    elseif kind == "Gate" then
+        raiseGate(data)
+    elseif kind == "Catch" then
+        capture(data.player, data)
+    else
+        local cell = data.cell
+        if cell then
+            freeCell(data)
+            placePlayer(data.player, vec(cell.x, 3.25, cell.z - 5.5), vec(cell.x, 3.25, cell.z - 10))
+        end
+        data.immuneUntil = os.clock() + 3.2
+        setLife(data.player, data, kind == "Aid" and "Fit" or "Hurt")
+        tell(data.player, kind == "Aid" and "Рана перевязана." or "Ты свободен. Уходи отсюда!")
+        tell(player, kind == "Aid" and "Напарник снова в строю." or "Напарник освобождён.")
+    end
+end
+
+-- Measure the hold on the server as well as checking role, distance and sight.
+ProximityPromptService.PromptButtonHoldBegan:Connect(function(prompt, player)
+    local info, profile = prompts[prompt], profiles[player]
+    if not info or not profile then return end
+    local now = os.clock()
+    if now - (profile.lastPrompt or -1) < 0.14 then return end
+    profile.lastPrompt = now
+    if validPrompt(player, info) then holds[player] = {info = info, start = now} end
+end)
+
+ProximityPromptService.PromptButtonHoldEnded:Connect(function(prompt, player)
+    local hold = holds[player]
+    if hold and prompt == hold.info.prompt and os.clock() - hold.start < hold.info.duration - 0.35 then
+        holds[player] = nil
+    end
+end)
+
+ProximityPromptService.PromptTriggered:Connect(function(prompt, player)
+    local info, hold = prompts[prompt], holds[player]
+    if not info or not hold or hold.info ~= info then return end
+    holds[player] = nil
+    local elapsed = os.clock() - hold.start
+    if elapsed >= info.duration - 0.34 and elapsed <= info.duration + 2 and validPrompt(player, info) then
+        completePrompt(player, info)
+    end
+end)
+
+local function spark(position)
+    local fx = block(effects, "Contact Pulse", vec(1, 1, 1), position, palette.red, NEON, false)
+    fx.Shape = Enum.PartType.Ball
+    fx.Transparency = 0.62
+    fx.CastShadow = false
+    TweenService:Create(fx, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        Size = vec(8, 8, 8), Transparency = 1,
+    }):Play()
+    Debris:AddItem(fx, 0.36)
+end
+
+local function hit(player, record, now)
+    local root = avatar(player)
+    if not root or not fit(record) or record.immuneUntil > now then return false end
+    record.immuneUntil = now + 1.6
+    if record.life == "Fit" then
+        setLife(player, record, "Hurt")
+        tell(player, "Ты ранен. Разорви дистанцию!")
+    else
+        setLife(player, record, "Down", now + 34)
+        tell(player, "Ты сбит с ног. Напарник может поднять тебя.")
+    end
+    spark(root.Position)
+    signalEvent:FireClient(player, "Hit")
+    return true
+end
+
+local function playerStrike(player, record, now)
+    local root = avatar(player)
+    if record.role ~= "Warden" or not root or now < round.release or now < record.nextStrike then return end
+    record.nextStrike = now + ATTACK_COOLDOWN
+    player:SetAttribute("StrikeAt", workspace:GetServerTimeNow() + ATTACK_COOLDOWN)
+    local target, closest = nil, ATTACK_RANGE
+    for _, survivor in ipairs(round.survivors) do
+        local entry = round.records[survivor]
+        local other = avatar(survivor)
+        if fit(entry) and other and entry.immuneUntil <= now then
+            local d = (root.Position - other.Position).Magnitude
+            if d <= closest and clear(root.Position, other.Position) then target, closest = survivor, d end
+        end
+    end
+    if target then
+        hit(target, round.records[target], now)
+    else
+        tell(player, "Цель вне досягаемости.")
+    end
+end
+
+local function outfitWarden(player)
+    local _, _, char = avatar(player)
+    if not char then return end
+    local outline = container("Highlight", "Warden Outline", char)
+    outline.Adornee = char
+    outline.DepthMode = Enum.HighlightDepthMode.Occluded
+    outline.FillColor = palette.darkRed
+    outline.OutlineColor = palette.red
+    outline.FillTransparency = 0.81
+    outline.OutlineTransparency = 0.36
+    local head = char:FindFirstChild("Head")
+    if head and head:IsA("BasePart") then
+        local lens = block(char, "Warden Visor", vec(head.Size.X * 0.85, 0.16, 0.14),
+            head.CFrame * CFrame.new(0, 0.08, -head.Size.Z / 2 - 0.08), palette.red, NEON, false)
+        lens.Massless = true
+        lens.Anchored = false
+        local weld = container("WeldConstraint", "Visor Weld", lens)
+        weld.Part0 = head
+        weld.Part1 = lens
+        light(lens, palette.red, 0.85, 15)
+    end
+end
+
+local function flat(position)
+    return vec(position.X, 0.06, position.Z)
+end
+
+local patrol = {vec(18, 0.06, -68), vec(80, 0.06, -68), vec(81, 0.06, 16), vec(50, 0.06, 73),
+    vec(-33, 0.06, 62), vec(-87, 0.06, 12), vec(-70, 0.06, -72), vec(-9, 0.06, -60)}
+
+local function createBot()
+    local model = container("Model", "Warden - Training", effects)
+    local base = marker(model, "Pivot", Vector3.zero)
+    model.PrimaryPart = base
+    local limbs = {}
+    for _, side in ipairs({-1, 1}) do
+        local arm = block(model, "Arm", vec(1.14, 2.44, 1.15), vec(side * 1.63, 3.46, 0), palette.wall, METAL, false)
+        local leg = block(model, "Leg", vec(1.04, 2.21, 1.19), vec(side * 0.59, 1.13, 0), palette.metal, METAL, false)
+        table.insert(limbs, {part = arm, home = arm.CFrame, side = side, arm = true})
+        table.insert(limbs, {part = leg, home = leg.CFrame, side = side, arm = false})
+    end
+    block(model, "Torso", vec(2.26, 2.3, 1.43), vec(0, 3.26, 0), palette.black, Enum.Material.DiamondPlate, false)
+    block(model, "Collar", vec(2.51, 0.39, 1.55), vec(0, 4.42, 0), palette.wall, METAL, false)
+    block(model, "Helmet", vec(1.68, 1.5, 1.46), vec(0, 5.29, 0), palette.metal, METAL, false)
+    local visor = block(model, "Visor", vec(1.38, 0.15, 0.16), vec(0, 5.32, -0.77), palette.red, NEON, false)
+    light(visor, palette.red, 1.25, 21)
+    local pos = patrol[1]
+    model:PivotTo(CFrame.lookAt(pos, patrol[2]))
+    return {model = model, pos = pos, limbs = limbs, walk = 0, point = 2, nextPath = 0,
+        path = {}, index = 1, strike = 0, lastSeen = 0}
+end
+
+local function canWalk(a, b)
+    local dir = b - a
+    if dir.Magnitude < 0.1 then return true end
+    local side = vec(dir.Z, 0, -dir.X).Unit * 1.14
+    local up = vec(0, 2.05, 0)
+    return clear(a + up, b + up) and clear(a + up + side, b + up + side) and clear(a + up - side, b + up - side)
+end
+
+local function requestPath(currentRound, bot, goal, now)
+    if bot.pending or now < bot.nextPath then return end
+    bot.pending = true
+    bot.nextPath = now + 1.1
+    local start = bot.pos
+    task.spawn(function()
+        local path = PathfindingService:CreatePath({AgentRadius = 2, AgentHeight = 5, AgentCanJump = false, WaypointSpacing = 5})
+        local ok = pcall(function()
+            path:ComputeAsync(start + vec(0, 1.8, 0), goal + vec(0, 1.8, 0))
+        end)
+        local points = ok and path.Status == Enum.PathStatus.Success and path:GetWaypoints() or {}
+        path:Destroy()
+        if round ~= currentRound or not bot.model.Parent then return end
+        bot.pending = false
+        bot.path = points
+        bot.index = 1
+    end)
+end
+
+local function updateBot(currentRound, now, dt)
+    local bot, survivor = currentRound.bot, currentRound.survivors[1]
+    local record = currentRound.records[survivor]
+    local root = avatar(survivor)
+    if now < currentRound.release or not fit(record) or not root then return end
+    local target = flat(root.Position)
+    local distance = (bot.pos - target).Magnitude
+    local sees = distance < 52 and clear(bot.pos + vec(0, 3.05, 0), root.Position)
+    local goal, speed = nil, 10.2
+    if sees then
+        bot.lastSeen = now + 5.5
+        bot.lastTarget = target
+        goal, speed = target, 14.5
+        if distance < 6.35 and now >= bot.strike and hit(survivor, record, now) then
+            bot.strike = now + 2.9
+        end
+    elseif now < bot.lastSeen and (bot.pos - bot.lastTarget).Magnitude >= 3 then
+        goal, speed = bot.lastTarget, 13.3
+    elseif currentRound.noise and now < currentRound.noise.expires and (bot.pos - flat(currentRound.noise.position)).Magnitude > 7 then
+        goal, speed = flat(currentRound.noise.position), 12.8
+        -- Stop beside the housing, not inside its collision volume.
+        goal += (bot.pos - goal).Unit * 5.1
+    else
+        if (bot.pos - patrol[bot.point]).Magnitude < 4 then bot.point = bot.point % #patrol + 1 end
+        goal = patrol[bot.point]
+    end
+    local nextPos = goal
+    if not canWalk(bot.pos, goal) then
+        requestPath(currentRound, bot, goal, now)
+        while bot.path[bot.index] and (bot.pos - flat(bot.path[bot.index].Position)).Magnitude < 1.9 do
+            bot.index += 1
+        end
+        if bot.path[bot.index] then nextPos = flat(bot.path[bot.index].Position) end
+    else
+        bot.path, bot.index = {}, 1
+    end
+    local delta = nextPos - bot.pos
+    if delta.Magnitude > 0.12 and (not sees or distance > 3.3) then
+        local step = delta.Unit * math.min(delta.Magnitude, speed * dt)
+        if canWalk(bot.pos, bot.pos + step + delta.Unit * 0.45) then
+            bot.pos += step
+            bot.walk += step.Magnitude * 1.65
+            local pose = CFrame.lookAt(bot.pos, bot.pos + delta.Unit)
+            bot.model:PivotTo(pose)
+            for _, limb in ipairs(bot.limbs) do
+                limb.part.CFrame = pose * limb.home * CFrame.Angles(math.sin(bot.walk) * 0.27 * limb.side * (limb.arm and 1 or -1), 0, 0)
+            end
+        end
+    end
+end
+
+local survivorSpawns = {vec(-78, 3.35, -13), vec(-26, 3.35, 65), vec(80, 3.35, 13), vec(37, 3.35, 69)}
+
+local function eligible()
+    local list = {}
+    for _, player in ipairs(Players:GetPlayers()) do
+        local profile = profiles[player]
+        if profile and profile.character == player.Character and avatar(player) then table.insert(list, player) end
+    end
+    table.sort(list, function(a, b) return profiles[a].order < profiles[b].order end)
+    return list
+end
+
+local function waiting(player)
+    player:SetAttribute("Role", "Waiting")
+    player:SetAttribute("Life", "Waiting")
+    player:SetAttribute("StrikeAt", 0)
+    player:SetAttribute("Energy", 100)
+    player:SetAttribute("Running", false)
+    player:SetAttribute("Threat", 0)
+    player:SetAttribute("RecoveryAt", 0)
+end
+
+startRound = function(solo, list)
+    if phase ~= "Lobby" or (solo and #list ~= 1) or (not solo and #list < 2) then return end
+    resetObjectives()
+    table.clear(holds)
+    roundsPlayed += 1
+    local now = os.clock()
+    local duration = solo and PRACTICE_TIME or MATCH_TIME
+    local count = math.min(#list, MAX_PLAYERS)
+    local warden = nil
+    if not solo then
+        warden = list[1]
+        for i = 2, count do
+            if profiles[list[i]].lastWarden < profiles[warden].lastWarden then warden = list[i] end
+        end
+        profiles[warden].lastWarden = roundsPlayed
+    end
+    round = {
+        solo = solo, records = {}, survivors = {}, warden = warden, release = now + 7,
+        ends = now + duration, required = count >= 4 and 3 or 2, repaired = 0, escaped = 0,
+    }
+    if solo then round.bot = createBot() end
+    for i = 1, count do
+        local player = list[i]
+        queueOrder += 1
+        profiles[player].order = queueOrder
+        local role = player == warden and "Warden" or "Survivor"
+        local record = {player = player, role = role, life = role == "Warden" and "Hunting" or "Fit", actions = {},
+            energy = 100, immuneUntil = 0, nextStrike = 0, captures = 0, running = false, expires = 0}
+        round.records[player] = record
+        player:SetAttribute("Role", role)
+        setLife(player, record, record.life)
+        player:SetAttribute("Energy", 100)
+        local _, hum = avatar(player)
+        if hum then hum.Health = hum.MaxHealth end
+        if role == "Warden" then
+            placePlayer(player, vec(17, 3.35, -69), vec(17, 3.35, 0))
+            outfitWarden(player)
+        else
+            table.insert(round.survivors, player)
+            placePlayer(player, survivorSpawns[#round.survivors], vec(0, 3.35, 0))
+        end
+    end
+    for _, unit in ipairs(generators) do genState(unit, true) end
+    phase = "Round"
+    lobbyUntil = nil
+    setState("Solo", solo)
+    setState("Repaired", 0)
+    setState("Required", round.required)
+    setState("Power", "Off")
+    setState("Seconds", duration)
+    setState("HuntAt", workspace:GetServerTimeNow() + 7)
+    setState("Phase", phase)
+end
+
+finishRound = function(forcedDetail)
+    if phase ~= "Round" or not round then return end
+    local last = round
+    phase = "Results"
+    round = nil
+    table.clear(holds)
+    if last.bot then last.bot.model:Destroy() end
+    for _, unit in ipairs(generators) do enabled(unit.interact, false) end
+    for _, gate in ipairs(gates) do enabled(gate.interact, false) end
+    for player, record in pairs(last.records) do
+        if player.Parent == Players then returnToLobby(player, record) end
+    end
+    local result = last.escaped > 0 and "ПОБЕГ УДАЛСЯ" or "ОБЪЕКТ ЗАКРЫТ"
+    if forcedDetail then result = "СМЕНА ПРЕРВАНА" end
+    local detail = forcedDetail or ("Выбрались: %d из %d"):format(last.escaped, #last.survivors)
+    resultsUntil = os.clock() + RESULT_TIME
+    setState("Result", result)
+    setState("ResultDetail", detail)
+    setState("Seconds", RESULT_TIME)
+    setState("Phase", phase)
+end
+
+local function setupPlayer(player)
+    if profiles[player] then return end
+    queueOrder += 1
+    profiles[player] = {order = queueOrder, lastWarden = 0}
+    player.RespawnLocation = spawn
+    waiting(player)
+    local function onCharacter(char)
+        local hum, root = char:WaitForChild("Humanoid", 12), char:WaitForChild("HumanoidRootPart", 12)
+        local profile = profiles[player]
+        if not hum or not root or not profile or char ~= player.Character or profile.character == char then return end
+        hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+        hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+        profile.character = char
+        hum.Died:Connect(function()
+            local current = round and round.records[player]
+            if not current or gone(current) then return end
+            if current.role == "Warden" then
+                finishRound("Смотритель выбыл.")
+            else
+                out(player, current, "Ты выбыл. Дождись завершения смены.")
+            end
+        end)
+        returnToLobby(player, nil)
+    end
+    player.CharacterAdded:Connect(onCharacter)
+    if player.Character then task.spawn(onCharacter, player.Character) end
+end
+
+Players.RespawnTime = 3
+Players.PlayerAdded:Connect(setupPlayer)
+for _, player in ipairs(Players:GetPlayers()) do setupPlayer(player) end
+
+Players.PlayerRemoving:Connect(function(player)
+    profiles[player], holds[player] = nil, nil
+    local record = round and round.records[player]
+    if not record then return end
+    if record.role == "Warden" then
+        finishRound("Смотритель покинул сервер.")
+    else
+        dropPrompts(record)
+        freeCell(record)
+        if record.life ~= "Escaped" then record.life = "Out" end
+    end
+end)
+
+actionEvent.OnServerEvent:Connect(function(player, action)
+    if type(action) ~= "string" or #action > 16 then return end
+    local profile, now = profiles[player], os.clock()
+    if not profile then return end
+    if action == "RunOff" then
+        local record = round and round.records[player]
+        if record and record.running then
+            record.running = false
+            player:SetAttribute("Running", false)
+            mobility(player, record, now)
+        end
+        return
+    end
+    if now - (profile.lastAction or -1) < 0.085 then return end
+    profile.lastAction = now
+    if action == "Practice" then
+        if phase == "Lobby" and #Players:GetPlayers() == 1 then
+            local list = eligible()
+            if list[1] == player then startRound(true, list) end
+        end
+        return
+    end
+    if phase ~= "Round" or not round then return end
+    local record = round.records[player]
+    if not record or gone(record) then return end
+    if action == "Strike" then
+        playerStrike(player, record, now)
+    elseif action == "RunOn" and fit(record) and record.energy >= 15 and avatar(player) then
+        record.running = true
+        player:SetAttribute("Running", true)
+        mobility(player, record, now)
+    end
+end)
+
+local function tickRound(now, dt)
+    local live = round
+    if not live then return end
+    setState("Seconds", math.max(0, math.ceil(live.ends - now)))
+    for player, hold in pairs(holds) do
+        if now - hold.start > hold.info.duration + 2 or not validPrompt(player, hold.info) then holds[player] = nil end
+    end
+    if live.bot then updateBot(live, now, dt) end
+    local threatPos = live.bot and live.bot.pos or nil
+    if live.warden then
+        local root = avatar(live.warden)
+        if root then threatPos = root.Position end
+        mobility(live.warden, live.records[live.warden], now)
+    end
+    local mobile, remaining = 0, 0
+    for _, player in ipairs(live.survivors) do
+        local record = live.records[player]
+        if not gone(record) then
+            local root = avatar(player)
+            if not root then
+                out(player, record)
+            elseif record.expires > 0 and now >= record.expires then
+                out(player, record, "Время на спасение истекло.")
+            else
+                local escaped = false
+                if fit(record) then
+                    local velocity = root.AssemblyLinearVelocity
+                    local moving = velocity.X * velocity.X + velocity.Z * velocity.Z > 8
+                    if record.running and moving then
+                        record.energy = math.max(0, record.energy - dt * 23)
+                        if record.energy <= 0 then
+                            record.running = false
+                            player:SetAttribute("Running", false)
+                        end
+                    else
+                        record.energy = math.min(100, record.energy + dt * 13)
+                    end
+                    local energy = math.floor(record.energy + 0.5)
+                    if player:GetAttribute("Energy") ~= energy then player:SetAttribute("Energy", energy) end
+                    for _, gate in ipairs(gates) do
+                        local cross = (root.Position.Z - gate.z) * gate.dir
+                        if gate.open and cross >= 4.2 and cross <= 20 and math.abs(root.Position.X - gate.x) < 6.9 and root.Position.Y < 9 then
+                            setLife(player, record, "Escaped")
+                            returnToLobby(player, record)
+                            live.escaped += 1
+                            tell(player, "Ты выбрался с объекта.")
+                            escaped = true
+                            break
+                        end
+                    end
+                    if not escaped then mobile += 1 end
+                end
+                if not escaped then
+                    remaining += 1
+                    mobility(player, record, now)
+                    local threat = threatPos and now >= live.release and math.clamp(1 - (root.Position - threatPos).Magnitude / 54, 0, 1) or 0
+                    local level = math.floor(threat * 20 + 0.5) * 5
+                    if level ~= player:GetAttribute("Threat") then player:SetAttribute("Threat", level) end
+                end
+            end
+        end
+    end
+    if mobile == 0 then live.noMobileAt = live.noMobileAt or now else live.noMobileAt = nil end
+    if remaining == 0 or (live.noMobileAt and now - live.noMobileAt > 4.5) or now >= live.ends then
+        finishRound()
+    end
+end
+
+local previous = os.clock()
+while true do
+    local now = os.clock()
+    if phase == "Lobby" then
+        local list = eligible()
+        setState("ReadyPlayers", #list)
+        if #list >= 2 then
+            lobbyUntil = lobbyUntil or now + BLOCK_TIME
+            setState("Seconds", math.max(0, math.ceil(lobbyUntil - now)))
+            if now >= lobbyUntil then startRound(false, list) end
+        else
+            lobbyUntil = nil
+            setState("Seconds", 0)
+        end
+    elseif phase == "Round" then
+        tickRound(now, math.clamp(now - previous, 0, 0.23))
+    else
+        setState("Seconds", math.max(0, math.ceil(resultsUntil - now)))
+        if now >= resultsUntil then
+            resetObjectives()
+            for _, player in ipairs(Players:GetPlayers()) do waiting(player) end
+            phase = "Lobby"
+            setState("ReadyPlayers", #eligible())
+            setState("Phase", phase)
+        end
+    end
+    previous = now
+    task.wait(0.11)
+end
+        ]]></ProtectedString>
+      </Properties>
+    </Item>
+  </Item>
+  <Item class="StarterGui" referent="RBX00000000000000000000000000000008">
+    <Properties><string name="Name">StarterGui</string></Properties>
+  </Item>
+  <Item class="StarterPlayer" referent="RBX00000000000000000000000000000009">
+    <Properties>
+      <string name="Name">StarterPlayer</string>
+      <float name="CameraMinZoomDistance">4</float>
+      <float name="CameraMaxZoomDistance">22</float>
+    </Properties>
+    <Item class="StarterPlayerScripts" referent="RBX0000000000000000000000000000000A">
+      <Properties><string name="Name">StarterPlayerScripts</string></Properties>
+      <Item class="LocalScript" referent="RBX0000000000000000000000000000000B">
+        <Properties>
+          <string name="Name">BlackoutClient</string>
+          <bool name="Disabled">false</bool>
+          <ProtectedString name="Source"><![CDATA[
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ContextActionService = game:GetService("ContextActionService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local Debris = game:GetService("Debris")
+
+local player = Players.LocalPlayer
+local network = ReplicatedStorage:WaitForChild("Blackout")
+local actions = network:WaitForChild("Action")
+local signals = network:WaitForChild("Signal")
+local rgb = Color3.fromRGB
+local red, amber, green = rgb(250, 70, 80), rgb(255, 175, 88), rgb(124, 230, 173)
+local paper, muted, base, line = rgb(242, 239, 232), rgb(192, 196, 205), rgb(17, 20, 26), rgb(58, 62, 72)
+local normal, bold = Enum.Font.GothamMedium, Enum.Font.GothamBold
+
+local function item(class, parent, values)
+    local object = Instance.new(class)
+    for key, value in pairs(values or {}) do object[key] = value end
+    object.Parent = parent
+    return object
+end
+
+local gui = item("ScreenGui", player:WaitForChild("PlayerGui"), {
+    Name = "BlackoutHUD", ResetOnSpawn = false, DisplayOrder = 10, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+})
+
+local function frame(parent, size, position, background, alpha)
+    return item("Frame", parent, {Size = size, Position = position, BackgroundColor3 = background or base,
+        BackgroundTransparency = alpha or 0, BorderSizePixel = 0})
+end
+
+local function label(parent, size, position, text, font, color, fontSize, align)
+    return item("TextLabel", parent, {Size = size, Position = position, Text = text, TextColor3 = color,
+        Font = font, TextSize = fontSize, TextXAlignment = align or Enum.TextXAlignment.Left,
+        BackgroundTransparency = 1, BorderSizePixel = 0, TextWrapped = true})
+end
+
+local function button(parent, size, position, text)
+    return item("TextButton", parent, {Size = size, Position = position, Text = text, TextColor3 = paper,
+        Font = bold, TextSize = 15, TextWrapped = true, BackgroundColor3 = rgb(166, 36, 50),
+        BorderSizePixel = 0, AutoButtonColor = true, Selectable = true})
+end
+
+local center = Enum.TextXAlignment.Center
+local threatShade = frame(gui, UDim2.new(1, 0, 0.27, 0), UDim2.fromScale(0, 0.73), rgb(109, 14, 29), 1)
+item("UIGradient", threatShade, {Rotation = 90, Transparency = NumberSequence.new({
+    NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.47, 0.69), NumberSequenceKeypoint.new(1, 0),
+})})
+local hitFlash = frame(gui, UDim2.fromScale(1, 1), UDim2.fromScale(0, 0), red, 1)
+local signature = frame(gui, UDim2.fromOffset(155, 62), UDim2.fromOffset(21, 18), base, 0.13)
+frame(signature, UDim2.new(0, 3, 1, 0), UDim2.fromScale(0, 0), red)
+label(signature, UDim2.fromOffset(140, 22), UDim2.fromOffset(13, 8), "BLACKOUT", bold, paper, 19)
+label(signature, UDim2.fromOffset(137, 16), UDim2.fromOffset(13, 33), "ОБЪЕКТ 07", normal, muted, 11)
+
+local timer = frame(gui, UDim2.fromOffset(236, 70), UDim2.new(0.5, 0, 0, 13), base, 0.12)
+timer.AnchorPoint = Vector2.new(0.5, 0)
+frame(timer, UDim2.new(1, 0, 0, 2), UDim2.fromScale(0, 0), red)
+local stopwatch = label(timer, UDim2.fromOffset(236, 33), UDim2.fromOffset(0, 7), "05:30", bold, paper, 26, center)
+local objective = label(timer, UDim2.fromOffset(236, 24), UDim2.fromOffset(0, 38), "ГЕНЕРАТОРЫ  0 / 2", bold, muted, 12, center)
+
+local condition = frame(gui, UDim2.fromOffset(298, 100), UDim2.new(0, 21, 1, -24), base, 0.11)
+condition.AnchorPoint = Vector2.new(0, 1)
+frame(condition, UDim2.new(0, 3, 1, 0), UDim2.fromScale(0, 0), red)
+local conditionTitle = label(condition, UDim2.new(1, -26, 0, 24), UDim2.fromOffset(14, 7), "БЕГЛЕЦ", bold, paper, 15)
+local conditionTip = label(condition, UDim2.new(1, -26, 0, 36), UDim2.fromOffset(14, 30), "", normal, muted, 12)
+local energyScale = frame(condition, UDim2.new(1, -30, 0, 3), UDim2.new(0, 15, 1, -17), line)
+local energyBar = frame(energyScale, UDim2.fromScale(1, 1), UDim2.fromScale(0, 0), paper)
+
+local banner = frame(gui, UDim2.new(1, -38, 0, 48), UDim2.new(0.5, 0, 0, 102), base, 0.12)
+banner.AnchorPoint = Vector2.new(0.5, 0)
+item("UISizeConstraint", banner, {MaxSize = Vector2.new(485, 48)})
+frame(banner, UDim2.new(0, 3, 1, 0), UDim2.fromScale(0, 0), red)
+local bannerText = label(banner, UDim2.new(1, -29, 1, 0), UDim2.fromOffset(15, 0), "", bold, paper, 14, center)
+local noticeUntil = 0
+banner.Visible = false
+
+local lobbyPanel = frame(gui, UDim2.new(1, -40, 0, 226), UDim2.fromScale(0.5, 0.53), base, 0.035)
+lobbyPanel.AnchorPoint = Vector2.new(0.5, 0.5)
+item("UISizeConstraint", lobbyPanel, {MaxSize = Vector2.new(470, 226)})
+frame(lobbyPanel, UDim2.new(1, 0, 0, 3), UDim2.fromScale(0, 0), red)
+local panelMode = label(lobbyPanel, UDim2.new(1, -40, 0, 20), UDim2.fromOffset(20, 15), "ОБЪЕКТ 07", bold, red, 12, center)
+local panelTitle = label(lobbyPanel, UDim2.new(1, -34, 0, 42), UDim2.fromOffset(17, 40), "BLACKOUT", bold, paper, 26, center)
+local panelText = label(lobbyPanel, UDim2.new(1, -40, 0, 70), UDim2.fromOffset(20, 86), "Загрузка объекта…", normal, muted, 14, center)
+local panelButton = button(lobbyPanel, UDim2.new(1, -40, 0, 42), UDim2.new(0, 20, 1, -59), "Начать тренировку")
+panelButton.Visible = false
+
+local viewing = frame(gui, UDim2.fromOffset(265, 74), UDim2.new(0.5, 0, 1, -22), base, 0.14)
+viewing.AnchorPoint = Vector2.new(0.5, 1)
+local viewingName = label(viewing, UDim2.new(1, -14, 0, 25), UDim2.fromOffset(7, 3), "НАБЛЮДЕНИЕ", bold, paper, 13, center)
+local viewingNext = button(viewing, UDim2.new(1, -16, 0, 34), UDim2.fromOffset(8, 33), "Дальше")
+viewing.Visible = false
+
+local lampPart = item("Part", workspace, {Name = "Local Flashlight", Size = Vector3.one * 0.2,
+    Anchored = true, Transparency = 1, CanCollide = false, CanTouch = false, CanQuery = false, CastShadow = false})
+local beam = item("SpotLight", lampPart, {Face = Enum.NormalId.Front, Color = rgb(205, 222, 255),
+    Range = 36, Angle = 70, Brightness = 1.25, Enabled = false})
+
+local function notice(text, duration)
+    bannerText.Text = text
+    banner.BackgroundTransparency = 0.12
+    bannerText.TextTransparency = 0
+    banner.Visible = true
+    noticeUntil = os.clock() + (duration or 3.1)
+end
+
+local function roleState()
+    return network:GetAttribute("Phase") or "Lobby", player:GetAttribute("Role"), player:GetAttribute("Life")
+end
+
+local function activeRole(phase, role, life)
+    return phase == "Round" and (role == "Warden" or role == "Survivor") and life ~= "Escaped" and life ~= "Out"
+end
+
+local function canRun(phase, role, life)
+    return phase == "Round" and role == "Survivor" and (life == "Fit" or life == "Hurt")
+end
+
+local tracked = {}
+local function refreshPrompt(prompt)
+    local phase, role, life = roleState()
+    local show = false
+    if phase == "Round" and prompt:GetAttribute("BlackoutEnabled") == true then
+        if prompt:GetAttribute("BlackoutKind") == "Catch" then
+            show = role == "Warden"
+        else
+            show = canRun(phase, role, life) and prompt:GetAttribute("BlackoutTarget") ~= player.UserId
+        end
+    end
+    if prompt.Enabled ~= show then prompt.Enabled = show end
+end
+
+local function track(object)
+    if not object:IsA("ProximityPrompt") or object.Name ~= "BlackoutInteraction" or tracked[object] then return end
+    tracked[object] = true
+    object.AttributeChanged:Connect(function() refreshPrompt(object) end)
+    object:GetPropertyChangedSignal("Enabled"):Connect(function() refreshPrompt(object) end)
+    object.Destroying:Connect(function() tracked[object] = nil end)
+    refreshPrompt(object)
+end
+
+for _, object in ipairs(workspace:GetDescendants()) do track(object) end
+workspace.DescendantAdded:Connect(track)
+local function filterPrompts()
+    for prompt in pairs(tracked) do refreshPrompt(prompt) end
+end
+network:GetAttributeChangedSignal("Phase"):Connect(filterPrompts)
+player:GetAttributeChangedSignal("Role"):Connect(filterPrompts)
+player:GetAttributeChangedSignal("Life"):Connect(filterPrompts)
+
+local controlMode = ""
+local function runAction(_, input)
+    if input == Enum.UserInputState.Begin then
+        actions:FireServer("RunOn")
+    elseif input == Enum.UserInputState.End or input == Enum.UserInputState.Cancel then
+        actions:FireServer("RunOff")
+    end
+    return Enum.ContextActionResult.Sink
+end
+
+local function strikeAction(_, input)
+    if input == Enum.UserInputState.Begin then actions:FireServer("Strike") end
+    return Enum.ContextActionResult.Sink
+end
+
+local function setControls(mode)
+    if mode == controlMode then return end
+    if controlMode == "Run" then
+        ContextActionService:UnbindAction("BlackoutRun")
+        actions:FireServer("RunOff")
+    elseif controlMode == "Strike" then
+        ContextActionService:UnbindAction("BlackoutStrike")
+    end
+    controlMode = mode
+    if mode == "Run" then
+        ContextActionService:BindAction("BlackoutRun", runAction, true, Enum.KeyCode.LeftShift, Enum.KeyCode.RightShift, Enum.KeyCode.ButtonL3)
+        ContextActionService:SetTitle("BlackoutRun", "Бег")
+    elseif mode == "Strike" then
+        ContextActionService:BindAction("BlackoutStrike", strikeAction, true, Enum.KeyCode.F, Enum.KeyCode.ButtonR2)
+        ContextActionService:SetTitle("BlackoutStrike", "Удар")
+    end
+end
+
+UserInputService.WindowFocusReleased:Connect(function()
+    if controlMode == "Run" then actions:FireServer("RunOff") end
+end)
+
+local watching = nil
+local function getHumanoid(target)
+    local char = target and target.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    return hum and hum.Health > 0 and hum or nil
+end
+
+local function setView(target)
+    local camera = workspace.CurrentCamera
+    watching = target
+    local hum = getHumanoid(target or player)
+    if camera and hum then camera.CameraSubject = hum end
+    viewing.Visible = target ~= nil
+    if target then viewingName.Text = "НАБЛЮДЕНИЕ / " .. target.DisplayName end
+end
+
+local function candidates()
+    local list = {}
+    for _, other in ipairs(Players:GetPlayers()) do
+        if other ~= player and activeRole("Round", other:GetAttribute("Role"), other:GetAttribute("Life")) and getHumanoid(other) then
+            table.insert(list, other)
+        end
+    end
+    table.sort(list, function(a, b) return a.UserId < b.UserId end)
+    return list
+end
+
+local function nextView()
+    local phase, role, life = roleState()
+    if phase ~= "Round" or activeRole(phase, role, life) then return end
+    local list = candidates()
+    local index = watching and table.find(list, watching) or 0
+    setView(list[(index or 0) + 1])
+    if watching then viewingNext.Text = (index or 0) + 1 == #list and "Вернуться в лобби" or "Следующий игрок" end
+end
+
+viewingNext.Activated:Connect(nextView)
+local practiceClickAt = 0
+panelButton.Activated:Connect(function()
+    local phase = network:GetAttribute("Phase")
+    if phase == "Lobby" and os.clock() - practiceClickAt > 0.7 then
+        practiceClickAt = os.clock()
+        actions:FireServer("Practice")
+    elseif phase == "Round" then
+        nextView()
+    end
+end)
+
+local pin, hitTween = nil, nil
+signals.OnClientEvent:Connect(function(effect, value)
+    if effect == "Notice" and type(value) == "string" then
+        notice(value)
+    elseif effect == "Hit" then
+        if hitTween then hitTween:Cancel() end
+        hitFlash.BackgroundTransparency = 0.77
+        hitTween = TweenService:Create(hitFlash, TweenInfo.new(0.48, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1})
+        hitTween:Play()
+    elseif effect == "Noise" and typeof(value) == "Vector3" then
+        if pin and pin.Parent then pin:Destroy() end
+        pin = item("Part", workspace, {Name = "Noise Signal", Position = value + Vector3.new(0, 4, 0),
+            Size = Vector3.one * 0.2, Anchored = true, Transparency = 1, CanCollide = false, CanTouch = false, CanQuery = false})
+        local callout = item("BillboardGui", pin, {Size = UDim2.fromOffset(101, 29), AlwaysOnTop = true, MaxDistance = 250})
+        local noise = label(callout, UDim2.fromScale(1, 1), UDim2.fromScale(0, 0), "ШУМ РЕМОНТА", bold, amber, 12, center)
+        noise.BackgroundColor3 = base
+        noise.BackgroundTransparency = 0.15
+        Debris:AddItem(pin, 3.6)
+    end
+end)
+
+local nearThreat, targetThreat = 0, 0
+local energy, targetEnergy = 1, 1
+local running, active = false, false
+RunService.RenderStepped:Connect(function(dt)
+    local camera = workspace.CurrentCamera
+    if camera then
+        if beam.Enabled then lampPart.CFrame = camera.CFrame end
+        local fov = running and 76 or 70
+        camera.FieldOfView += (fov - camera.FieldOfView) * math.min(1, dt * 7)
+    end
+    nearThreat += (targetThreat - nearThreat) * math.min(1, dt * 6)
+    threatShade.BackgroundTransparency = 1 - nearThreat * (0.46 + 0.06 * math.sin(os.clock() * 7))
+    energy += (targetEnergy - energy) * math.min(1, dt * 12)
+    energyBar.Size = UDim2.fromScale(energy, 1)
+    if banner.Visible then
+        local fade = math.clamp(1 - (noticeUntil - os.clock()) * 3.5, 0, 1)
+        banner.BackgroundTransparency = 0.12 + fade * 0.88
+        bannerText.TextTransparency = fade
+        if fade >= 1 then banner.Visible = false end
+    end
+end)
+
+local lifeLabels = {Fit = "БЕГЛЕЦ / В СТРОЮ", Hurt = "БЕГЛЕЦ / РАНЕН", Down = "ТЫ СБИТ С НОГ", Held = "ТЫ В ИЗОЛЯТОРЕ"}
+local lastPhase = ""
+while gui.Parent do
+    local phase, role, life = roleState()
+    local seconds = network:GetAttribute("Seconds") or 0
+    local clock = workspace:GetServerTimeNow()
+    local huntIn = math.max(0, math.ceil((network:GetAttribute("HuntAt") or 0) - clock))
+    local inputName = UserInputService:GetLastInputType().Name
+    local touch = inputName == "Touch" or (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled)
+    local gamepad = string.sub(inputName, 1, 7) == "Gamepad"
+    local cam = workspace.CurrentCamera
+    signature.Visible = not cam or cam.ViewportSize.X >= 620
+    active = activeRole(phase, role, life)
+    local canSprint = canRun(phase, role, life)
+    local warden = active and role == "Warden"
+    local observing = phase == "Round" and not active
+    if watching then
+        if not observing or not table.find(candidates(), watching) then
+            setView(nil)
+        elseif cam and cam.CameraSubject ~= getHumanoid(watching) then
+            setView(watching)
+        end
+    end
+    if phase ~= lastPhase then
+        if phase == "Round" and active then
+            notice(warden and "ТЫ СМОТРИТЕЛЬ. Не дай беглецам уйти." or "ТЫ БЕГЛЕЦ. Найди и запусти генераторы.", 4.1)
+        elseif phase ~= "Round" and pin then
+            if pin.Parent then pin:Destroy() end
+            pin = nil
+        end
+        lastPhase = phase
+    end
+
+    setControls(canSprint and "Run" or (warden and "Strike" or ""))
+    running = canSprint and player:GetAttribute("Running") == true
+    beam.Enabled = canSprint
+    targetThreat = active and role == "Survivor" and (player:GetAttribute("Threat") or 0) / 100 or 0
+    targetEnergy = (player:GetAttribute("Energy") or 100) / 100
+    energyBar.BackgroundColor3 = targetEnergy < 0.24 and red or paper
+    timer.Visible = phase == "Round"
+    condition.Visible = active
+    condition.Position = UDim2.new(0, touch and 14 or 21, 1, touch and -113 or -24)
+    condition.Size = UDim2.fromOffset(touch and 242 or 298, 100)
+
+    if phase == "Round" then
+        stopwatch.Text = string.format("%02d:%02d", math.floor(seconds / 60), seconds % 60)
+        stopwatch.TextColor3 = seconds <= 45 and red or paper
+        local power = network:GetAttribute("Power")
+        if power == "Open" then
+            objective.Text, objective.TextColor3 = "ВЫХОД ОТКРЫТ", green
+        elseif power == "Ready" then
+            objective.Text, objective.TextColor3 = "ОТКРОЙ ВОРОТА A ИЛИ B", amber
+        else
+            objective.Text = ("ГЕНЕРАТОРЫ  %d / %d"):format(network:GetAttribute("Repaired") or 0, network:GetAttribute("Required") or 2)
+            objective.TextColor3 = muted
+        end
+    end
+
+    if warden then
+        local strikeIn = math.max(0, (player:GetAttribute("StrikeAt") or 0) - clock)
+        conditionTitle.Text, conditionTitle.TextColor3 = "СМОТРИТЕЛЬ", red
+        if huntIn > 0 then
+            conditionTip.Text = "Погоня начнётся через " .. huntIn .. " с."
+        elseif strikeIn > 0 then
+            conditionTip.Text = ("Следующий удар через %.1f с."):format(strikeIn)
+        else
+            conditionTip.Text = touch and "Удар вблизи. Удерживай действие над сбитым." or
+                (gamepad and "RT: удар / X: запереть сбитого" or "F: удар / E: запереть сбитого")
+        end
+        energyScale.Visible = false
+    elseif active then
+        conditionTitle.Text = lifeLabels[life] or "БЕГЛЕЦ"
+        conditionTitle.TextColor3 = life == "Fit" and paper or (life == "Hurt" and amber or red)
+        if life == "Down" or life == "Held" then
+            local left = math.max(0, math.ceil((player:GetAttribute("RecoveryAt") or 0) - clock))
+            conditionTip.Text = "Жди напарника / " .. left .. " с"
+        else
+            conditionTip.Text = touch and "Удерживай действие / Бег" or
+                (gamepad and "X: действие / L3: бег" or "Удерживай E: действие / Shift: бег")
+        end
+        energyScale.Visible = canSprint
+    end
+
+    lobbyPanel.Visible = not active and not watching
+    local showPanelButton = false
+    if phase == "Lobby" then
+        local ready = network:GetAttribute("ReadyPlayers") or 0
+        panelMode.Text = "ПУЛЬТ УПРАВЛЕНИЯ"
+        if ready >= 2 then
+            panelTitle.Text = "СМЕНА ЧЕРЕЗ " .. seconds .. " С"
+            panelText.Text = "На объекте: " .. ready .. ". В смене участвуют до пяти игроков. Роли назначаются автоматически."
+        else
+            panelTitle.Text = "ОЖИДАНИЕ СМЕНЫ"
+            panelText.Text = "Матч начнётся, когда на объекте будет два игрока. Можно сыграть одному против бота."
+            panelButton.Text = "Начать тренировку"
+            showPanelButton = ready == 1 and #Players:GetPlayers() == 1
+        end
+    elseif phase == "Results" then
+        panelMode.Text = "СИГНАЛ С ОБЪЕКТА 07"
+        panelTitle.Text = network:GetAttribute("Result") or "СМЕНА ОКОНЧЕНА"
+        panelText.Text = (network:GetAttribute("ResultDetail") or "") .. "\nСледующая смена через " .. seconds .. " с."
+    elseif observing then
+        panelMode.Text = "ПУЛЬТ УПРАВЛЕНИЯ"
+        panelTitle.Text = life == "Escaped" and "ТЫ ВЫБРАЛСЯ" or (life == "Out" and "ТЫ ВЫБЫЛ" or "СМЕНА УЖЕ ИДЁТ")
+        panelText.Text = "Следующая смена начнётся после текущей. За участниками можно наблюдать."
+        panelButton.Text = "Наблюдать"
+        showPanelButton = not watching and #candidates() > 0
+    end
+    panelButton.Visible = showPanelButton
+    task.wait(0.12)
+end
+          ]]></ProtectedString>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+</roblox>
